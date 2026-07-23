@@ -1,22 +1,26 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 import requests
-import json
 import re
+import base64
 
 app = FastAPI()
 
+class TarefaRequest(BaseModel):
+    event_title: Optional[str] = "Evento sem título"
+    event_description: Optional[str] = "Sem descrição"
+    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
+    event_start_date: Optional[str] = ""
+    file_name: Optional[str] = None
+    file_base64: Optional[str] = None
+
 @app.post("/criar-tarefa")
-async def criar_tarefa(
-    event_title: str = Form("Evento sem título"),
-    event_description: str = Form("Sem descrição"),
-    organizer_email: str = Form("kacio.mota@grupofokus.com.br"),
-    event_start_date: str = Form(""),
-    file: UploadFile = File(None)
-):
-    print(f"DEBUG - Título recebido: {event_title}")
+async def criar_tarefa(payload: TarefaRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
     
     # Limpeza de HTML do e-mail
-    texto_bruto = event_description or ""
+    texto_bruto = payload.event_description or ""
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
     
     linhas_filtradas = []
@@ -31,23 +35,23 @@ async def criar_tarefa(
 
     # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
-    if event_start_date:
+    if payload.event_start_date:
         try:
-            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
+            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
             event_deadline = event_date.strftime('%m/%d/%Y')
-        except Exception as e:
+        except Exception:
             event_deadline = ''
 
     admin_email = 'nuubes@grupofokus.com.br'
     company_key = 'n1w8wHXbAuE='
     
-    # 1. Cria a tarefa principal
+    # 1. Cria a tarefa principal no Nuubes
     url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
-    descricao_final = f"E-mail recebido de {organizer_email}.\n\n{texto_final_desc}"
+    descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data_occurrence = {
         'company.key': company_key,
-        'occurrence.summary': event_title,
+        'occurrence.summary': payload.event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
@@ -69,35 +73,39 @@ async def criar_tarefa(
         resposta_texto = response_occ.text.strip()
         print(f"DEBUG - Resposta Nuubes Tarefa: {resposta_texto}")
 
-        # Tenta extrair o número da ocorrência criada da resposta do Nuubes
-        # O Nuubes costuma retornar o número ou texto indicando sucesso
+        # Extrai o número da ocorrência criada
         numero_ocorrencia = None
         match = re.search(r'\d+', resposta_texto)
         if match:
             numero_ocorrencia = match.group(0)
 
-        # 2. Se houver anexo e conseguirmos o número da ocorrência, envia o arquivo pela API de arquivos
-        if file and file.filename and numero_ocorrencia:
+        # 2. Se houver anexo em Base64 e o número da ocorrência, envia usando a API de arquivos do Nuubes
+        if payload.file_base64 and numero_ocorrencia:
             url_files = 'https://api.nuubes.com/api.files.logic'
-            file_content = await file.read()
-            
-            data_file = {
-                'company.key': company_key,
-                'occurrence.numberOccurrence': numero_ocorrencia
-            }
-            
-            files_data = {
-                'fileInfo': (file.filename, file_content, file.content_type or 'application/octet-stream')
-            }
-            
-            response_file = requests.post(url_files, data=data_file, files=files_data, headers=headers, timeout=60)
-            print(f"DEBUG - Resposta Nuubes Anexo: {response_file.text}")
+            try:
+                file_bytes = base64.b64decode(payload.file_base64)
+                # Nome padrão caso venha vazio
+                nome_arq = payload.file_name if payload.file_name else "anexo_email.dat"
+                
+                data_file = {
+                    'company.key': company_key,
+                    'occurrence.numberOccurrence': numero_ocorrencia
+                }
+                
+                files_data = {
+                    'fileInfo': (nome_arq, file_bytes, 'application/octet-stream')
+                }
+                
+                response_file = requests.post(url_files, data=data_file, files=files_data, headers=headers, timeout=60)
+                print(f"DEBUG - Resposta Nuubes Anexo: {response_file.text}")
+            except Exception as e:
+                print(f"DEBUG - Erro ao processar anexo Base64: {e}")
 
         return {
             "status": "success",
             "nuubes_response": resposta_texto,
-            "title": event_title,
-            "attachment_sent": bool(file and file.filename)
+            "title": payload.event_title,
+            "attachment_sent": bool(payload.file_base64)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
