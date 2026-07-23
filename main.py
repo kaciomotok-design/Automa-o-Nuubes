@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import requests
@@ -7,17 +7,18 @@ import re
 
 app = FastAPI()
 
-# Modelo para o Calendário (mantém a rota /criar-tarefa que já está funcionando)
-class CalendarioRequest(BaseModel):
+class TarefaRequest(BaseModel):
     event_title: Optional[str] = "Evento sem título"
     event_description: Optional[str] = "Sem descrição"
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
+    origem: Optional[str] = "calendario"  # Pode passar "email" ou "calendario"
 
 @app.post("/criar-tarefa")
-async def criar_tarefa(payload: CalendarioRequest):
-    print(f"DEBUG - Título recebido (Calendário): {payload.event_title}")
+async def criar_tarefa(payload: TarefaRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
     
+    # Limpeza de HTML ou tags do Outlook
     texto_bruto = payload.event_description or ""
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
     
@@ -31,6 +32,7 @@ async def criar_tarefa(payload: CalendarioRequest):
 
     texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
+    # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
     if payload.event_start_date:
         try:
@@ -43,7 +45,15 @@ async def criar_tarefa(payload: CalendarioRequest):
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
+    # Define o tipo de ocorrência com base na origem da chamada
+    if payload.origem and payload.origem.lower() == "email":
+        tipo_ocorrencia = 'OS. SOLICITAÇÕES INTERNAS'
+        prefixo_desc = "E-mail recebido de"
+    else:
+        tipo_ocorrencia = 'OS. REUNIÃO INTERNA'
+        prefixo_desc = "Evento criado no calendário por"
+
+    descricao_final = f"{prefixo_desc} {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data = {
         'company.key': 'n1w8wHXbAuE=',
@@ -51,7 +61,7 @@ async def criar_tarefa(payload: CalendarioRequest):
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
+        'occurrence.occurrenceType.name': tipo_ocorrencia,
         'occurrence.customer.name': 'GRUPO FOKUS',
         'occurrence.customer.externalCode': 'FOKUS001'
     }
@@ -71,86 +81,8 @@ async def criar_tarefa(payload: CalendarioRequest):
             "status": "success",
             "nuubes_response": response.text.strip(),
             "title": payload.event_title,
+            "tipo_utilizado": tipo_ocorrencia,
             "deadline": event_deadline
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Nova rota para a Caixa de Entrada (E-mail) com suporte a anexo e tipo OS. SOLICITAÇÕES INTERNAS
-@app.post("/criar-tarefa-email")
-async def criar_tarefa_email(
-    event_title: Optional[str] = Form("E-mail sem título"),
-    event_description: Optional[str] = Form("Sem descrição"),
-    organizer_email: Optional[str] = Form("kacio.mota@grupofokus.com.br"),
-    event_start_date: Optional[str] = Form(""),
-    file: Optional[UploadFile] = File(None)
-):
-    print(f"DEBUG - Título recebido (E-mail): {event_title}")
-    
-    texto_bruto = event_description or ""
-    texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
-    
-    linhas_filtradas = []
-    for linha in texto_limpo.splitlines():
-        linha_limpa = linha.strip()
-        if "@font-face" in linha_limpa or "MsoNormal" in linha_limpa or "!--" in linha_limpa:
-            continue
-        if linha_limpa and linha_limpa != "&nbsp;":
-            linhas_filtradas.append(linha_limpa)
-
-    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
-
-    event_deadline = ''
-    if event_start_date:
-        try:
-            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
-            event_deadline = event_date.strftime('%m/%d/%Y')
-        except Exception as e:
-            print(f"DEBUG - Erro ao formatar data de e-mail: {e}")
-            event_deadline = ''
-
-    admin_email = 'nuubes@grupofokus.com.br'
-    url = 'https://api.nuubes.com/api.occurrence.logic'
-    
-    descricao_final = f"E-mail recebido de {organizer_email}.\n\n{texto_final_desc}"
-
-    data = {
-        'company.key': 'n1w8wHXbAuE=',
-        'occurrence.summary': event_title,
-        'occurrence.description': descricao_final,
-        'occurrence.requestor.email': admin_email,
-        'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': 'OS. SOLICITAÇÕES INTERNAS',
-        'occurrence.customer.name': 'GRUPO FOKUS',
-        'occurrence.customer.externalCode': 'FOKUS001'
-    }
-
-    if event_deadline:
-        data['occurrence.deadLine'] = event_deadline
-
-    files_payload = None
-    if file:
-        file_bytes = await file.read()
-        files_payload = {'file': (file.filename, file_bytes, file.content_type)}
-
-    try:
-        if files_payload:
-            # Envio multipart/form-data caso exista anexo
-            response = requests.post(url, data=data, files=files_payload, timeout=30)
-        else:
-            # Envio padrão urlencoded caso venha sem anexo
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
-                'User-Agent': 'Nuubes-API-Client',
-                'Accept': 'text/plain, */*'
-            }
-            response = requests.post(url, data=data, headers=headers, timeout=30)
-
-        return {
-            "status": "success",
-            "nuubes_response": response.text.strip(),
-            "title": event_title,
-            "has_attachment": bool(file)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
