@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Form, HTTPException
 import requests
 from datetime import datetime
+import json
 import re
 from html import unescape
 
@@ -15,26 +16,30 @@ async def criar_tarefa(
 ):
     print(f"DEBUG - Título recebido: {event_title}")
     
-    # Limpeza total e rigorosa do corpo da mensagem
+    # Limpeza cirúrgica do corpo da mensagem
     texto_limpo = event_description
     
-    if texto_limpo:
-        # Decodifica entidades HTML (como &nbsp;, &amp;, etc.)
-        texto_limpo = unescape(texto_limpo)
-        
-        # Remove tags HTML (<html>, <<body>, <p>, <br>, etc.)
-        texto_limpo = re.sub(r'<[^>]+>', '\n', texto_limpo)
-        
-        # Substitui múltiplos espaços e quebras de linha excessivas por espaços limpos
-        linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip()]
-        texto_limpo = "\n".join(linhas)
-        
-        if not texto_limpo:
-            texto_limpo = "Sem descrição informada."
-    else:
-        texto_limpo = "Sem descrição informada."
+    # Se por acaso vier em formato JSON ou objeto
+    if texto_limpo.strip().startswith("{"):
+        try:
+            dados_json = json.loads(texto_limpo)
+            texto_limpo = dados_json.get("body", "Reunião do Outlook")
+        except:
+            pass
 
-    # Processar a data do evento para o formato do Nuubes (mm/dd/aaaa)
+    # Decodifica entidades HTML e remove tags de formatação do Word/Outlook
+    texto_limpo = unescape(texto_limpo)
+    texto_limpo = re.sub(r'<[^>]+>', '\n', texto_limpo)
+    
+    # Limpa linhas vazias e espaços excessivos
+    linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip() and linha.strip() != '&nbsp;']
+    
+    if linhas:
+        texto_final_desc = "\n".join(linhas)
+    else:
+        texto_final_desc = "Sem descrição informada."
+
+    # Trata a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
     if event_start_date:
         try:
@@ -44,12 +49,10 @@ async def criar_tarefa(
             print(f"DEBUG - Erro ao formatar data: {e}")
             event_deadline = ''
 
-    # Configurações para envio ao Nuubes
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Montagem da descrição final limpa e organizada
-    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{texto_limpo}"
+    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{texto_final_desc}"
 
     data = {
         'company.key': 'n1w8wHXbAuE=',
@@ -73,16 +76,11 @@ async def criar_tarefa(
 
     try:
         response = requests.post(url, data=data, headers=headers, timeout=30)
-        response_text = response.text.strip()
-        
-        print(f"DEBUG - Status Nuubes: {response.status_code} - Resposta: {response_text}")
-        
         return {
             "status": "success",
-            "nuubes_response": response_text,
+            "nuubes_response": response.text.strip(),
             "title": event_title,
             "deadline": event_deadline
         }
     except Exception as e:
-        print(f"DEBUG - Erro na requisição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
