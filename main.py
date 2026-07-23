@@ -14,20 +14,30 @@ async def criar_tarefa(
 ):
     print(f"DEBUG - Título recebido: {event_title}")
     
-    # 1. Limpeza inteligente da descrição (Remove HTML, JSON e metadados indesejados)
+    # Limpeza avançada da descrição do Outlook
     descricao_limpa = event_description
     
-    # Se a descrição veio em formato de dicionário ou contiver tags HTML do Outlook
-    if "{" in descricao_limpa and "}" in descricao_limpa:
-        # Tenta extrair um texto mais amigável ou define um padrão se for o objeto bruto do Outlook
-        descricao_limpa = "Reunião agendada via Calendário do Outlook."
-    else:
-        # Remove tags HTML comuns caso venham no texto
-        descricao_limpa = re.sub('<.*?>', '', descricao_limpa).strip()
-        if not descricao_limpa:
-            descricao_limpa = "Sem descrição informada."
+    # Tenta encontrar o texto real do corpo se houver tags HTML do Outlook
+    if "<body" in descricao_limpa or "<html>" in descricao_limpa:
+        # Procura o que está dentro das tags <p class="MsoNormal"> ou similares
+        match_p = re.findall(r'<p[^>]*>(.*?)</p>', descricao_limpa, re.DOTALL)
+        if match_p:
+            # Junta os parágrafos encontrados limpando as tags HTML internas
+            textos_paragrafos = [re.sub('<.*?>', '', p).strip() for p in match_p]
+            textos_validos = [t for t in textos_paragrafos if t and t != '&nbsp;']
+            if textos_validos:
+                descricao_limpa = "\n".join(textos_validos)
+            else:
+                descricao_limpa = "Sem descrição informada."
+        else:
+            # Remove qualquer HTML restante se não achar parágrafos específicos
+            descricao_limpa = re.sub('<.*?>', '', descricao_limpa).strip()
+    
+    # Se ainda sobrar o blocão JSON de metadados, limpa de forma genérica
+    if '"subject":' in descricao_limpa or '"id":' in descricao_limpa:
+        descricao_limpa = "Reunião agendada via Calendário do Outlook (Sem descrição adicional)."
 
-    # 2. Processar a data do evento para o formato do Nuubes (mm/dd/aaaa)
+    # Processar a data do evento para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
     if event_start_date:
         try:
@@ -37,12 +47,12 @@ async def criar_tarefa(
             print(f"DEBUG - Erro ao formatar data: {e}")
             event_deadline = ''
 
-    # 3. Configurações para envio ao Nuubes
+    # Configurações para envio ao Nuubes
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Montagem da descrição final organizada
-    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\nDetalhes:\n{descricao_limpa}"
+    # Montagem da descrição final limpa e organizada
+    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{descricao_limpa}"
 
     data = {
         'company.key': 'n1w8wHXbAuE=',
