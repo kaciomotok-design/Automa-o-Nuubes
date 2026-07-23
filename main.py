@@ -1,5 +1,4 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from typing import Optional
 import requests
 from datetime import datetime
@@ -7,20 +6,10 @@ import re
 
 app = FastAPI()
 
-class TarefaRequest(BaseModel):
-    event_title: Optional[str] = "Evento sem título"
-    event_description: Optional[str] = "Sem descrição"
-    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
-    event_start_date: Optional[str] = ""
-
-@app.post("/criar-tarefa")
-async def criar_tarefa(payload: TarefaRequest):
-    print(f"DEBUG - Título recebido: {payload.event_title}")
-    
-    # Limpeza de HTML ou tags do Outlook
-    texto_bruto = payload.event_description or ""
+def limpar_html(texto_bruto):
+    if not texto_bruto:
+        return "Sem descrição informada."
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
-    
     linhas_filtradas = []
     for linha in texto_limpo.splitlines():
         linha_limpa = linha.strip()
@@ -28,37 +17,48 @@ async def criar_tarefa(payload: TarefaRequest):
             continue
         if linha_limpa and linha_limpa != "&nbsp;":
             linhas_filtradas.append(linha_limpa)
+    return "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
+def formatar_data(data_str):
+    if not data_str:
+        return ''
+    try:
+        event_date = datetime.fromisoformat(data_str.replace('Z', '+00:00'))
+        return event_date.strftime('%m/%d/%Y')
+    except Exception:
+        return ''
 
-    # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
-    event_deadline = ''
-    if payload.event_start_date:
-        try:
-            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
-            event_deadline = event_date.strftime('%m/%d/%Y')
-        except Exception as e:
-            print(f"DEBUG - Erro ao formatar data: {e}")
-            event_deadline = ''
+@app.post("/criar-tarefa")
+async def criar_tarefa(
+    event_title: Optional[str] = Form("Evento sem título"),
+    event_description: Optional[str] = Form("Sem descrição"),
+    organizer_email: Optional[str] = Form("kacio.mota@grupofokus.com.br"),
+    event_start_date: Optional[str] = Form(""),
+    origem: Optional[str] = Form("calendario"),
+    file: Optional[UploadFile] = File(None)
+):
+    print(f"DEBUG - Título recebido: {event_title} | Origem: {origem}")
+    
+    texto_final_desc = limpar_html(event_description)
+    event_deadline = formatar_data(event_start_date)
 
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Identifica automaticamente se é e-mail ou calendário pelo contexto/título ou origem
-    # Se vier da caixa de entrada, podemos direcionar para a OS de solicitações internas:
-    # (Caso queira separar por palavra no título ou se o fluxo de e-mail mandar algo específico)
-    if "E-mail" in (payload.event_title or "") or "Solicitação" in (payload.event_title or ""):
+    # Define o tipo de ocorrência baseado na origem enviada pelo Power Automate
+    if origem and origem.lower() == "email":
         tipo_ocorrencia = 'OS. SOLICITAÇÕES INTERNAS'
-        prefixo_desc = "E-mail recebido de"
+        prefixo_desc = f"E-mail recebido de {organizer_email}."
     else:
         tipo_ocorrencia = 'OS. REUNIÃO INTERNA'
-        prefixo_desc = "Evento criado no calendário por"
+        prefixo_desc = f"Evento criado no calendário por {organizer_email}."
 
-    descricao_final = f"{prefixo_desc} {payload.organizer_email}.\n\n{texto_final_desc}"
+    descricao_final = f"{prefixo_desc}\n\n{texto_final_desc}"
 
+    # Dados base que vão para o Nuubes
     data = {
         'company.key': 'n1w8wHXbAuE=',
-        'occurrence.summary': payload.event_title,
+        'occurrence.summary': event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
@@ -70,20 +70,28 @@ async def criar_tarefa(payload: TarefaRequest):
     if event_deadline:
         data['occurrence.deadLine'] = event_deadline
 
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
-        'User-Agent': 'Nuubes-API-Client',
-        'Accept': 'text/plain, */*'
-    }
-
     try:
-        response = requests.post(url, data=data, headers=headers, timeout=30)
+        # Prepara os arquivos caso existam
+        files_payload = None
+        if file and file.filename:
+            file_bytes = await file.read()
+            # O Nuubes geralmente espera o campo do arquivo nomeado corretamente
+            files_payload = {'file': (file.filename, file_bytes, file.content_type or 'application/octet-stream')}
+
+        # O requests gerencia automaticamente o Content-Type como multipart/form-data quando 'files' é passado
+        response = requests.post(url, data=data, files=files_payload, timeout=30)
+        
+        resposta_nuubes = response.text.strip()
+        print(f"DEBUG - Resposta Nuubes: {resposta_nuubes}")
+
         return {
             "status": "success",
-            "nuubes_response": response.text.strip(),
-            "title": payload.event_title,
+            "nuubes_response": resposta_nuubes,
+            "title": event_title,
             "tipo_utilizado": tipo_ocorrencia,
+            "tem_anexo": bool(files_payload),
             "deadline": event_deadline
         }
     except Exception as e:
+        print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
