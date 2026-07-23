@@ -7,22 +7,20 @@ import re
 
 app = FastAPI()
 
-class CalendarioRequest(BaseModel):
+class TarefaRequest(BaseModel):
     event_title: Optional[str] = "Evento sem título"
     event_description: Optional[str] = "Sem descrição"
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
 
-class EmailRequest(BaseModel):
-    event_title: Optional[str] = "E-mail sem título"
-    event_description: Optional[str] = "Sem descrição"
-    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
-    event_start_date: Optional[str] = ""
-
-def limpar_html(texto_bruto):
-    if not texto_bruto:
-        return "Sem descrição informada."
+@app.post("/criar-tarefa")
+async def criar_tarefa(payload: TarefaRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
+    
+    # Limpeza de HTML do e-mail ou evento
+    texto_bruto = payload.event_description or ""
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
+    
     linhas_filtradas = []
     for linha in texto_limpo.splitlines():
         linha_limpa = linha.strip()
@@ -30,35 +28,33 @@ def limpar_html(texto_bruto):
             continue
         if linha_limpa and linha_limpa != "&nbsp;":
             linhas_filtradas.append(linha_limpa)
-    return "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-def formatar_data(data_str):
-    if not data_str:
-        return ''
-    try:
-        data_limpa_str = data_str[:19]
-        event_date = datetime.strptime(data_limpa_str, '%Y-%m-%dT%H:%M:%S')
-        return event_date.strftime('%m/%d/%Y')
-    except Exception:
-        return ''
+    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem, tipo_ocorrencia):
-    texto_final_desc = limpar_html(descricao)
-    event_deadline = formatar_data(data_str)
-    
+    # Tratamento seguro da data para o formato do Nuubes (mm/dd/aaaa)
+    event_deadline = ''
+    if payload.event_start_date:
+        try:
+            data_limpa_str = payload.event_start_date[:19]
+            event_date = datetime.strptime(data_limpa_str, '%Y-%m-%dT%H:%M:%S')
+            event_deadline = event_date.strftime('%m/%d/%Y')
+        except Exception as e:
+            print(f"DEBUG - Erro ao formatar data '{payload.event_start_date}': {e}")
+            event_deadline = ''
+
     admin_email = 'nuubes@grupofokus.com.br'
     company_key = 'n1w8wHXbAuE='
     url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
     
-    descricao_final = f"{tipo_origem} de {email}.\n\n{texto_final_desc}"
+    descricao_final = f"E-mail/Convite recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data_occurrence = {
         'company.key': company_key,
-        'occurrence.summary': titulo or "Sem título",
+        'occurrence.summary': payload.event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': tipo_ocorrencia,
+        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
         'occurrence.customer.name': 'GRUPO FOKUS',
         'occurrence.customer.externalCode': 'FOKUS001'
     }
@@ -66,29 +62,22 @@ def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem, tipo
     if event_deadline:
         data_occurrence['occurrence.deadLine'] = event_deadline
 
-    headers = {'User-Agent': 'Nuubes-API-Client', 'Accept': 'text/plain, */*'}
-    
-    print(f"ENVIANDO PARA NUUBES -> Tipo: '{tipo_ocorrencia}' | Projeto: 'ANÁLISE DE PROCESSOS'")
-    response = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
-    print(f"RESPOSTA NUUBES -> Status: {response.status_code}, Body: {response.text}")
-    
-    return response.text.strip(), response.status_code
+    headers = {
+        'User-Agent': 'Nuubes-API-Client',
+        'Accept': 'text/plain, */*'
+    }
 
-@app.post("/criar-tarefa-calendario")
-async def criar_tarefa_calendario(payload: CalendarioRequest):
-    resp_texto, status = processar_envio_nuubes(
-        payload.event_title, payload.event_description, 
-        payload.organizer_email, payload.event_start_date, 
-        "Evento de Calendário", "OS. REUNIÃO INTERNA"
-    )
-    return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
+    try:
+        response_occ = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
+        resposta_texto = response_occ.text.strip()
+        print(f"DEBUG - Resposta Nuubes: {resposta_texto}")
 
-@app.post("/criar-tarefa-email")
-async def criar_tarefa_email(payload: EmailRequest):
-    # Se quiser testar sem o prefixo OS., mude temporariamente aqui para "SOLICITAÇÕES INTERNAS"
-    resp_texto, status = processar_envio_nuubes(
-        payload.event_title, payload.event_description, 
-        payload.organizer_email, payload.event_start_date, 
-        "E-mail recebido", "SOLICITAÇÕES INTERNAS"
-    )
-    return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
+        return {
+            "status": "success",
+            "nuubes_response": resposta_texto,
+            "title": payload.event_title,
+            "deadline_used": event_deadline
+        }
+    except Exception as e:
+        print(f"DEBUG - Erro crítico na requisição: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
