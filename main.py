@@ -1,62 +1,57 @@
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 import requests
 from datetime import datetime
-import json
-import re
-from html import unescape
+from bs4 import BeautifulSoup
 
 app = FastAPI()
 
+# Modelo para receber o JSON limpo enviado pelo Power Automate
+class TarefaRequest(BaseModel):
+    event_title: Optional[str] = "Evento sem título"
+    event_description: Optional[str] = "Sem descrição"
+    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
+    event_start_date: Optional[str] = ""
+
 @app.post("/criar-tarefa")
-async def criar_tarefa(
-    event_title: str = Form("Evento sem título"),
-    event_description: str = Form("Sem descrição"),
-    organizer_email: str = Form("kacio.mota@grupofokus.com.br"),
-    event_start_date: str = Form("")
-):
-    print(f"DEBUG - Título recebido: {event_title}")
+async def criar_tarefa(payload: TarefaRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
     
-    # Limpeza cirúrgica do corpo da mensagem
-    texto_limpo = event_description
-    
-    # Se por acaso vier em formato JSON ou objeto
-    if texto_limpo.strip().startswith("{"):
-        try:
-            dados_json = json.loads(texto_limpo)
-            texto_limpo = dados_json.get("body", "Reunião do Outlook")
-        except:
-            pass
-
-    # Decodifica entidades HTML e remove tags de formatação do Word/Outlook
-    texto_limpo = unescape(texto_limpo)
-    texto_limpo = re.sub(r'<[^>]+>', '\n', texto_limpo)
-    
-    # Limpa linhas vazias e espaços excessivos
-    linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip() and linha.strip() != '&nbsp;']
-    
-    if linhas:
-        texto_final_desc = "\n".join(linhas)
+    # 1. Limpeza profissional do HTML do Outlook usando BeautifulSoup
+    texto_bruto = payload.event_description or ""
+    if texto_bruto:
+        soup = BeautifulSoup(texto_bruto, "html.parser")
+        for script in soup(["script", "style"]):
+            script.decompose()
+        texto_limpo = soup.get_text(separator="\n").strip()
     else:
-        texto_final_desc = "Sem descrição informada."
+        texto_limpo = ""
 
-    # Trata a data para o formato do Nuubes (mm/dd/aaaa)
+    # Organiza as linhas e remove excessos de espaços vazios
+    linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip()]
+    texto_final_desc = "\n".join(linhas) if linhas else "Sem descrição informada."
+
+    # 2. Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
-    if event_start_date:
+    if payload.event_start_date:
         try:
-            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
+            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
             event_deadline = event_date.strftime('%m/%d/%Y')
         except Exception as e:
             print(f"DEBUG - Erro ao formatar data: {e}")
             event_deadline = ''
 
+    # 3. Configurações para envio ao Nuubes
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{texto_final_desc}"
+    # Descrição final estruturada perfeitamente dentro do campo correto
+    descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data = {
         'company.key': 'n1w8wHXbAuE=',
-        'occurrence.summary': event_title,
+        'occurrence.summary': payload.event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
@@ -79,7 +74,7 @@ async def criar_tarefa(
         return {
             "status": "success",
             "nuubes_response": response.text.strip(),
-            "title": event_title,
+            "title": payload.event_title,
             "deadline": event_deadline
         }
     except Exception as e:
