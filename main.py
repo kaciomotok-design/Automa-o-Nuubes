@@ -7,14 +7,12 @@ import re
 
 app = FastAPI()
 
-# Modelo para o Calendário
 class CalendarioRequest(BaseModel):
     event_title: Optional[str] = "Evento sem título"
     event_description: Optional[str] = "Sem descrição"
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
 
-# Modelo para a Caixa de Entrada (E-mail)
 class EmailRequest(BaseModel):
     event_title: Optional[str] = "E-mail sem título"
     event_description: Optional[str] = "Sem descrição"
@@ -44,62 +42,50 @@ def formatar_data(data_str):
     except Exception:
         return ''
 
-# Rota 1: Exclusiva para o Calendário
+def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem):
+    texto_final_desc = limpar_html(descricao)
+    event_deadline = formatar_data(data_str)
+    
+    admin_email = 'nuubes@grupofokus.com.br'
+    company_key = 'n1w8wHXbAuE='
+    url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
+    
+    descricao_final = f"{tipo_origem} de {email}.\n\n{texto_final_desc}"
+
+    data_occurrence = {
+        'company.key': company_key,
+        'occurrence.summary': titulo or "Sem título",
+        'occurrence.description': descricao_final,
+        'occurrence.requestor.email': admin_email,
+        'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
+        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
+        'occurrence.customer.name': 'GRUPO FOKUS',
+        'occurrence.customer.externalCode': 'FOKUS001'
+    }
+
+    if event_deadline:
+        data_occurrence['occurrence.deadLine'] = event_deadline
+
+    headers = {'User-Agent': 'Nuubes-API-Client', 'Accept': 'text/plain, */*'}
+    
+    print(f"DEBUG - Enviando para Nuubes: {titulo} | Data: {event_deadline}")
+    response = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
+    print(f"DEBUG - Resposta Nuubes Status: {response.status_code}, Body: {response.text}")
+    
+    return response.text.strip(), response.status_code
+
 @app.post("/criar-tarefa-calendario")
 async def criar_tarefa_calendario(payload: CalendarioRequest):
-    texto_final_desc = limpar_html(payload.event_description)
-    event_deadline = formatar_data(payload.event_start_date)
-    
-    admin_email = 'nuubes@grupofokus.com.br'
-    company_key = 'n1w8wHXbAuE='
-    url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
-    
-    descricao_final = f"Evento de Calendário de {payload.organizer_email}.\n\n{texto_final_desc}"
+    resp_texto, status = processar_envio_nuubes(
+        payload.event_title, payload.event_description, 
+        payload.organizer_email, payload.event_start_date, "Evento de Calendário"
+    )
+    return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
 
-    data_occurrence = {
-        'company.key': company_key,
-        'occurrence.summary': payload.event_title,
-        'occurrence.description': descricao_final,
-        'occurrence.requestor.email': admin_email,
-        'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
-        'occurrence.customer.name': 'GRUPO FOKUS',
-        'occurrence.customer.externalCode': 'FOKUS001'
-    }
-
-    if event_deadline:
-        data_occurrence['occurrence.deadLine'] = event_deadline
-
-    headers = {'User-Agent': 'Nuubes-API-Client', 'Accept': 'text/plain, */*'}
-    response = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
-    return {"status": "success", "nuubes_response": response.text.strip()}
-
-# Rota 2: Exclusiva para a Caixa de Entrada (E-mails)
 @app.post("/criar-tarefa-email")
 async def criar_tarefa_email(payload: EmailRequest):
-    texto_final_desc = limpar_html(payload.event_description)
-    event_deadline = formatar_data(payload.event_start_date)
-    
-    admin_email = 'nuubes@grupofokus.com.br'
-    company_key = 'n1w8wHXbAuE='
-    url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
-    
-    descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
-
-    data_occurrence = {
-        'company.key': company_key,
-        'occurrence.summary': payload.event_title,
-        'occurrence.description': descricao_final,
-        'occurrence.requestor.email': admin_email,
-        'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
-        'occurrence.customer.name': 'GRUPO FOKUS',
-        'occurrence.customer.externalCode': 'FOKUS001'
-    }
-
-    if event_deadline:
-        data_occurrence['occurrence.deadLine'] = event_deadline
-
-    headers = {'User-Agent': 'Nuubes-API-Client', 'Accept': 'text/plain, */*'}
-    response = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
-    return {"status": "success", "nuubes_response": response.text.strip()}
+    resp_texto, status = processar_envio_nuubes(
+        payload.event_title, payload.event_description, 
+        payload.organizer_email, payload.event_start_date, "E-mail recebido"
+    )
+    return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
