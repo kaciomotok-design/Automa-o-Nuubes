@@ -2,6 +2,7 @@ from fastapi import FastAPI, Form, HTTPException
 import requests
 from datetime import datetime
 import re
+from html import unescape
 
 app = FastAPI()
 
@@ -14,28 +15,24 @@ async def criar_tarefa(
 ):
     print(f"DEBUG - Título recebido: {event_title}")
     
-    # Limpeza avançada da descrição do Outlook
-    descricao_limpa = event_description
+    # Limpeza total e rigorosa do corpo da mensagem
+    texto_limpo = event_description
     
-    # Tenta encontrar o texto real do corpo se houver tags HTML do Outlook
-    if "<body" in descricao_limpa or "<html>" in descricao_limpa:
-        # Procura o que está dentro das tags <p class="MsoNormal"> ou similares
-        match_p = re.findall(r'<p[^>]*>(.*?)</p>', descricao_limpa, re.DOTALL)
-        if match_p:
-            # Junta os parágrafos encontrados limpando as tags HTML internas
-            textos_paragrafos = [re.sub('<.*?>', '', p).strip() for p in match_p]
-            textos_validos = [t for t in textos_paragrafos if t and t != '&nbsp;']
-            if textos_validos:
-                descricao_limpa = "\n".join(textos_validos)
-            else:
-                descricao_limpa = "Sem descrição informada."
-        else:
-            # Remove qualquer HTML restante se não achar parágrafos específicos
-            descricao_limpa = re.sub('<.*?>', '', descricao_limpa).strip()
-    
-    # Se ainda sobrar o blocão JSON de metadados, limpa de forma genérica
-    if '"subject":' in descricao_limpa or '"id":' in descricao_limpa:
-        descricao_limpa = "Reunião agendada via Calendário do Outlook (Sem descrição adicional)."
+    if texto_limpo:
+        # Decodifica entidades HTML (como &nbsp;, &amp;, etc.)
+        texto_limpo = unescape(texto_limpo)
+        
+        # Remove tags HTML (<html>, <<body>, <p>, <br>, etc.)
+        texto_limpo = re.sub(r'<[^>]+>', '\n', texto_limpo)
+        
+        # Substitui múltiplos espaços e quebras de linha excessivas por espaços limpos
+        linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip()]
+        texto_limpo = "\n".join(linhas)
+        
+        if not texto_limpo:
+            texto_limpo = "Sem descrição informada."
+    else:
+        texto_limpo = "Sem descrição informada."
 
     # Processar a data do evento para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
@@ -52,7 +49,7 @@ async def criar_tarefa(
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
     # Montagem da descrição final limpa e organizada
-    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{descricao_limpa}"
+    descricao_final = f"Evento criado no calendário por {organizer_email}.\n\n{texto_limpo}"
 
     data = {
         'company.key': 'n1w8wHXbAuE=',
