@@ -82,3 +82,4 @@ async def criar_tarefa_calendario(payload: CalendarioRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico na requisição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        # Atualizado em 2026 ás 14:03
