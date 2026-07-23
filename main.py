@@ -42,7 +42,7 @@ def formatar_data(data_str):
     except Exception:
         return ''
 
-def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem):
+def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem, tipo_ocorrencia):
     texto_final_desc = limpar_html(descricao)
     event_deadline = formatar_data(data_str)
     
@@ -58,7 +58,7 @@ def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem):
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
-        'occurrence.occurrenceType.name': 'OS. REUNIÃO INTERNA',
+        'occurrence.occurrenceType.name': tipo_ocorrencia,
         'occurrence.customer.name': 'GRUPO FOKUS',
         'occurrence.customer.externalCode': 'FOKUS001'
     }
@@ -77,7 +77,8 @@ def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem):
 async def criar_tarefa_calendario(payload: CalendarioRequest):
     resp_texto, status = processar_envio_nuubes(
         payload.event_title, payload.event_description, 
-        payload.organizer_email, payload.event_start_date, "Evento de Calendário"
+        payload.organizer_email, payload.event_start_date, 
+        "Evento de Calendário", "OS. REUNIÃO INTERNA"
     )
     return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
 
@@ -85,6 +86,7 @@ async def criar_tarefa_calendario(payload: CalendarioRequest):
 async def criar_tarefa_email(payload: EmailRequest):
     resp_texto, status = processar_envio_nuubes(
         payload.event_title, payload.event_description, 
-        payload.organizer_email, payload.event_start_date, "E-mail recebido"
+        payload.organizer_email, payload.event_start_date, 
+        "E-mail recebido", "OS. SOLICITAÇÕES INTERNAS"
     )
     return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
