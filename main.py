@@ -1,27 +1,22 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import requests
 from datetime import datetime
 import re
-import base64
 
 app = FastAPI()
 
-class TarefaRequest(BaseModel):
-    event_title: Optional[str] = "Evento sem título"
-    event_description: Optional[str] = "Sem descrição"
-    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
-    event_start_date: Optional[str] = ""
-    file_name: Optional[str] = None
-    file_base64: Optional[str] = None
-
 @app.post("/criar-tarefa")
-async def criar_tarefa(payload: TarefaRequest):
-    print(f"DEBUG - Título recebido: {payload.event_title}")
+async def criar_tarefa(
+    event_title: str = Form("Evento sem título"),
+    event_description: str = Form("Sem descrição"),
+    organizer_email: str = Form("kacio.mota@grupofokus.com.br"),
+    event_start_date: str = Form(""),
+    file: UploadFile = File(None)
+):
+    print(f"DEBUG - Título recebido: {event_title}")
     
     # Limpeza de HTML do e-mail
-    texto_bruto = payload.event_description or ""
+    texto_bruto = event_description or ""
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
     
     linhas_filtradas = []
@@ -36,9 +31,9 @@ async def criar_tarefa(payload: TarefaRequest):
 
     # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
-    if payload.event_start_date:
+    if event_start_date:
         try:
-            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
+            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
             event_deadline = event_date.strftime('%m/%d/%Y')
         except Exception as e:
             print(f"DEBUG - Erro ao formatar data: {e}")
@@ -47,11 +42,12 @@ async def criar_tarefa(payload: TarefaRequest):
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
+    descricao_final = f"E-mail recebido de {organizer_email}.\n\n{texto_final_desc}"
 
+    # Dados base do formulário para o Nuubes
     data = {
         'company.key': 'n1w8wHXbAuE=',
-        'occurrence.summary': payload.event_title,
+        'occurrence.summary': event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
@@ -65,15 +61,12 @@ async def criar_tarefa(payload: TarefaRequest):
 
     files_to_send = None
     
-    # Se veio um arquivo em Base64, decodifica e envia para o Nuubes
-    if payload.file_base64 and payload.file_name:
-        try:
-            file_bytes = base64.b64decode(payload.file_base64)
-            files_to_send = {
-                'fileInfo': (payload.file_name, file_bytes, 'application/octet-stream')
-            }
-        except Exception as e:
-            print(f"DEBUG - Erro ao decodificar anexo: {e}")
+    # Se houver um arquivo vindo do Power Automate, prepara o envio multipart
+    if file and file.filename:
+        file_content = await file.read()
+        files_to_send = {
+            'fileInfo': (file.filename, file_content, file.content_type or 'application/octet-stream')
+        }
 
     headers = {
         'User-Agent': 'Nuubes-API-Client',
@@ -85,8 +78,9 @@ async def criar_tarefa(payload: TarefaRequest):
         return {
             "status": "success",
             "nuubes_response": response.text.strip(),
-            "title": payload.event_title,
-            "has_attachment": bool(payload.file_base64)
+            "title": event_title,
+            "has_attachment": bool(file and file.filename)
         }
     except Exception as e:
+        print(f"DEBUG - Erro na requisição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
