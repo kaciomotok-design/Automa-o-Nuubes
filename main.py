@@ -1,34 +1,27 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import FastAPI, Form, File, UploadFile, HTTPException
 import requests
 from datetime import datetime
 import re
 
 app = FastAPI()
 
-class TarefaRequest(BaseModel):
-    event_title: Optional[str] = "Evento sem título"
-    event_description: Optional[str] = "Sem descrição"
-    organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
-    event_start_date: Optional[str] = ""
-
 @app.post("/criar-tarefa")
-async def criar_tarefa(payload: TarefaRequest):
-    print(f"DEBUG - Título recebido: {payload.event_title}")
+async def criar_tarefa(
+    event_title: str = Form("Evento sem título"),
+    event_description: str = Form("Sem descrição"),
+    organizer_email: str = Form("kacio.mota@grupofokus.com.br"),
+    event_start_date: str = Form(""),
+    file: UploadFile = File(None) # Captura opcional de anexo
+):
+    print(f"DEBUG - Título recebido: {event_title}")
     
-    # Limpeza radical de qualquer HTML ou tag do Outlook
-    texto_bruto = payload.event_description or ""
-    
-    # Remove tudo o que estiver entre tags <> (HTML completo)
+    # Limpeza de HTML/sujeira do texto
+    texto_bruto = event_description or ""
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
     
-    # Limpa linhas vazias, espaços excessivos e restos de estilos CSS
     linhas_filtradas = []
-    ignorar = False
     for linha in texto_limpo.splitlines():
         linha_limpa = linha.strip()
-        # Ignora blocos de estilo do Word/Outlook que possam sobrar
         if "@font-face" in linha_limpa or "MsoNormal" in linha_limpa or "!--" in linha_limpa:
             continue
         if linha_limpa and linha_limpa != "&nbsp;":
@@ -38,9 +31,9 @@ async def criar_tarefa(payload: TarefaRequest):
 
     # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
-    if payload.event_start_date:
+    if event_start_date:
         try:
-            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
+            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
             event_deadline = event_date.strftime('%m/%d/%Y')
         except Exception as e:
             print(f"DEBUG - Erro ao formatar data: {e}")
@@ -49,12 +42,12 @@ async def criar_tarefa(payload: TarefaRequest):
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Descrição final estruturada limpa
-    descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
+    descricao_final = f"E-mail recebido de {organizer_email}.\n\n{texto_final_desc}"
 
+    # Monta os dados básicos do formulário
     data = {
         'company.key': 'n1w8wHXbAuE=',
-        'occurrence.summary': payload.event_title,
+        'occurrence.summary': event_title,
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
@@ -66,19 +59,30 @@ async def criar_tarefa(payload: TarefaRequest):
     if event_deadline:
         data['occurrence.deadLine'] = event_deadline
 
+    files_to_send = None
+    
+    # Se houver um anexo vindo do Power Automate, prepara para enviar ao Nuubes
+    if file and file.filename:
+        file_content = await file.read()
+        files_to_send = {
+            'fileInfo': (file.filename, file_content, file.content_type or 'application/octet-stream')
+        }
+
     headers = {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
         'User-Agent': 'Nuubes-API-Client',
         'Accept': 'text/plain, */*'
+        # Nota: O requests gerencia o Content-Type automaticamente quando enviamos 'files'
     }
 
     try:
-        response = requests.post(url, data=data, headers=headers, timeout=30)
+        # Envia para o Nuubes (com ou sem anexo)
+        response = requests.post(url, data=data, files=files_to_send, headers=headers, timeout=60)
         return {
             "status": "success",
             "nuubes_response": response.text.strip(),
-            "title": payload.event_title,
-            "deadline": event_deadline
+            "title": event_title,
+            "has_attachment": bool(file and file.filename)
         }
     except Exception as e:
+        print(f"DEBUG - Erro na requisição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
