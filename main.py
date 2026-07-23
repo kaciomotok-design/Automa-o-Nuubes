@@ -7,20 +7,16 @@ import re
 
 app = FastAPI()
 
-class TarefaRequest(BaseModel):
+class CalendarioRequest(BaseModel):
     event_title: Optional[str] = "Evento sem título"
     event_description: Optional[str] = "Sem descrição"
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
 
-@app.post("/criar-tarefa")
-async def criar_tarefa(payload: TarefaRequest):
-    print(f"DEBUG - Título recebido: {payload.event_title}")
-    
-    # Limpeza de HTML do e-mail ou evento
-    texto_bruto = payload.event_description or ""
+def limpar_html(texto_bruto):
+    if not texto_bruto:
+        return "Sem descrição informada."
     texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
-    
     linhas_filtradas = []
     for linha in texto_limpo.splitlines():
         linha_limpa = linha.strip()
@@ -28,29 +24,34 @@ async def criar_tarefa(payload: TarefaRequest):
             continue
         if linha_limpa and linha_limpa != "&nbsp;":
             linhas_filtradas.append(linha_limpa)
+    return "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
+def formatar_data(data_str):
+    if not data_str:
+        return ''
+    try:
+        data_limpa_str = data_str[:19]
+        event_date = datetime.strptime(data_limpa_str, '%Y-%m-%dT%H:%M:%S')
+        return event_date.strftime('%m/%d/%Y')
+    except Exception:
+        return ''
 
-    # Tratamento seguro da data para o formato do Nuubes (mm/dd/aaaa)
-    event_deadline = ''
-    if payload.event_start_date:
-        try:
-            data_limpa_str = payload.event_start_date[:19]
-            event_date = datetime.strptime(data_limpa_str, '%Y-%m-%dT%H:%M:%S')
-            event_deadline = event_date.strftime('%m/%d/%Y')
-        except Exception as e:
-            print(f"DEBUG - Erro ao formatar data '{payload.event_start_date}': {e}")
-            event_deadline = ''
+@app.post("/criar-tarefa-calendario")
+async def criar_tarefa_calendario(payload: CalendarioRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
+    
+    texto_final_desc = limpar_html(payload.event_description)
+    event_deadline = formatar_data(payload.event_start_date)
 
     admin_email = 'nuubes@grupofokus.com.br'
     company_key = 'n1w8wHXbAuE='
     url_occurrence = 'https://api.nuubes.com/api.occurrence.logic'
     
-    descricao_final = f"E-mail/Convite recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
+    descricao_final = f"Evento de Calendário de {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data_occurrence = {
         'company.key': company_key,
-        'occurrence.summary': payload.event_title,
+        'occurrence.summary': payload.event_title or "Sem título",
         'occurrence.description': descricao_final,
         'occurrence.requestor.email': admin_email,
         'occurrence.project.name': 'ANÁLISE DE PROCESSOS',
