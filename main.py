@@ -3,11 +3,10 @@ from pydantic import BaseModel
 from typing import Optional
 import requests
 from datetime import datetime
-from bs4 import BeautifulSoup
+import re
 
 app = FastAPI()
 
-# Modelo para receber o JSON limpo enviado pelo Power Automate
 class TarefaRequest(BaseModel):
     event_title: Optional[str] = "Evento sem título"
     event_description: Optional[str] = "Sem descrição"
@@ -18,21 +17,26 @@ class TarefaRequest(BaseModel):
 async def criar_tarefa(payload: TarefaRequest):
     print(f"DEBUG - Título recebido: {payload.event_title}")
     
-    # 1. Limpeza profissional do HTML do Outlook usando BeautifulSoup
+    # Limpeza radical de qualquer HTML ou tag do Outlook
     texto_bruto = payload.event_description or ""
-    if texto_bruto:
-        soup = BeautifulSoup(texto_bruto, "html.parser")
-        for script in soup(["script", "style"]):
-            script.decompose()
-        texto_limpo = soup.get_text(separator="\n").strip()
-    else:
-        texto_limpo = ""
+    
+    # Remove tudo o que estiver entre tags <> (HTML completo)
+    texto_limpo = re.sub(r'<[^>]+>', '\n', texto_bruto)
+    
+    # Limpa linhas vazias, espaços excessivos e restos de estilos CSS
+    linhas_filtradas = []
+    ignorar = False
+    for linha in texto_limpo.splitlines():
+        linha_limpa = linha.strip()
+        # Ignora blocos de estilo do Word/Outlook que possam sobrar
+        if "@font-face" in linha_limpa or "MsoNormal" in linha_limpa or "!--" in linha_limpa:
+            continue
+        if linha_limpa and linha_limpa != "&nbsp;":
+            linhas_filtradas.append(linha_limpa)
 
-    # Organiza as linhas e remove excessos de espaços vazios
-    linhas = [linha.strip() for linha in texto_limpo.splitlines() if linha.strip()]
-    texto_final_desc = "\n".join(linhas) if linhas else "Sem descrição informada."
+    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-    # 2. Tratar a data para o formato do Nuubes (mm/dd/aaaa)
+    # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
     if payload.event_start_date:
         try:
@@ -42,11 +46,10 @@ async def criar_tarefa(payload: TarefaRequest):
             print(f"DEBUG - Erro ao formatar data: {e}")
             event_deadline = ''
 
-    # 3. Configurações para envio ao Nuubes
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Descrição final estruturada perfeitamente dentro do campo correto
+    # Descrição final estruturada limpa
     descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
 
     data = {
