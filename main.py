@@ -31,14 +31,16 @@ async def criar_tarefa(payload: TarefaRequest):
 
     texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-    # Tratar a data para o formato do Nuubes (mm/dd/aaaa)
+    # Tratamento seguro da data para o formato do Nuubes (mm/dd/aaaa)
     event_deadline = ''
     if payload.event_start_date:
         try:
-            event_date = datetime.fromisoformat(payload.event_start_date.replace('Z', '+00:00'))
+            # Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:MM:SS) ignorando frações de segundos extras
+            data_limpa_str = payload.event_start_date[:19]
+            event_date = datetime.strptime(data_limpa_str, '%Y-%m-%dT%H:%M:%S')
             event_deadline = event_date.strftime('%m/%d/%Y')
         except Exception as e:
-            print(f"DEBUG - Erro ao formatar data: {e}")
+            print(f"DEBUG - Erro ao formatar data '{payload.event_start_date}': {e}")
             event_deadline = ''
 
     admin_email = 'nuubes@grupofokus.com.br'
@@ -74,7 +76,9 @@ async def criar_tarefa(payload: TarefaRequest):
         return {
             "status": "success",
             "nuubes_response": resposta_texto,
-            "title": payload.event_title
+            "title": payload.event_title,
+            "deadline_used": event_deadline
         }
     except Exception as e:
+        print(f"DEBUG - Erro crítico na requisição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
