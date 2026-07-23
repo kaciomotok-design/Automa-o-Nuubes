@@ -68,8 +68,9 @@ def processar_envio_nuubes(titulo, descricao, email, data_str, tipo_origem, tipo
 
     headers = {'User-Agent': 'Nuubes-API-Client', 'Accept': 'text/plain, */*'}
     
+    print(f"ENVIANDO PARA NUUBES -> Tipo: '{tipo_ocorrencia}' | Projeto: 'ANÁLISE DE PROCESSOS'")
     response = requests.post(url_occurrence, data=data_occurrence, headers=headers, timeout=30)
-    print(f"DEBUG - Resposta Nuubes Status: {response.status_code}, Body: {response.text}")
+    print(f"RESPOSTA NUUBES -> Status: {response.status_code}, Body: {response.text}")
     
     return response.text.strip(), response.status_code
 
@@ -84,9 +85,10 @@ async def criar_tarefa_calendario(payload: CalendarioRequest):
 
 @app.post("/criar-tarefa-email")
 async def criar_tarefa_email(payload: EmailRequest):
+    # Se quiser testar sem o prefixo OS., mude temporariamente aqui para "SOLICITAÇÕES INTERNAS"
     resp_texto, status = processar_envio_nuubes(
         payload.event_title, payload.event_description, 
         payload.organizer_email, payload.event_start_date, 
-        "E-mail recebido", "OS. SOLICITAÇÕES INTERNAS"
+        "E-mail recebido", "SOLICITAÇÕES INTERNAS"
     )
     return {"status": "success", "nuubes_code": status, "nuubes_response": resp_texto}
