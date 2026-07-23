@@ -12,7 +12,6 @@ class TarefaRequest(BaseModel):
     event_description: Optional[str] = "Sem descrição"
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
-    origem: Optional[str] = "calendario"  # Pode passar "email" ou "calendario"
 
 @app.post("/criar-tarefa")
 async def criar_tarefa(payload: TarefaRequest):
@@ -45,8 +44,10 @@ async def criar_tarefa(payload: TarefaRequest):
     admin_email = 'nuubes@grupofokus.com.br'
     url = 'https://api.nuubes.com/api.occurrence.logic'
     
-    # Define o tipo de ocorrência com base na origem da chamada
-    if payload.origem and payload.origem.lower() == "email":
+    # Identifica automaticamente se é e-mail ou calendário pelo contexto/título ou origem
+    # Se vier da caixa de entrada, podemos direcionar para a OS de solicitações internas:
+    # (Caso queira separar por palavra no título ou se o fluxo de e-mail mandar algo específico)
+    if "E-mail" in (payload.event_title or "") or "Solicitação" in (payload.event_title or ""):
         tipo_ocorrencia = 'OS. SOLICITAÇÕES INTERNAS'
         prefixo_desc = "E-mail recebido de"
     else:
