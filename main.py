@@ -8,6 +8,12 @@ import base64
 
 app = FastAPI()
 
+COMPANY_KEY = "n1w8wHXbAuE="
+ADMIN_EMAIL = "nuubes@grupofokus.com.br"
+
+URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
+URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
+
 
 class AnexoRequest(BaseModel):
     nome: str
@@ -24,20 +30,10 @@ class TarefaRequest(BaseModel):
     anexos: Optional[List[AnexoRequest]] = []
 
 
-@app.get("/")
-async def healthcheck():
-    return {
-        "status": "online",
-        "service": "Nuubes Fokus API"
-    }
+def limpar_html(texto_bruto):
+    if not texto_bruto:
+        return "Sem descrição informada."
 
-
-@app.post("/criar-tarefa")
-async def criar_tarefa(payload: TarefaRequest):
-    print(f"DEBUG - Título recebido: {payload.event_title}")
-    print(f"DEBUG - Origem recebida: {payload.origem}")
-
-    texto_bruto = payload.event_description or ""
     texto_limpo = re.sub(r"<[^>]+>", "\n", texto_bruto)
 
     linhas_filtradas = []
@@ -51,17 +47,104 @@ async def criar_tarefa(payload: TarefaRequest):
         if linha_limpa and linha_limpa != "&nbsp;":
             linhas_filtradas.append(linha_limpa)
 
-    texto_final_desc = "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
+    return "\n".join(linhas_filtradas) if linhas_filtradas else "Sem descrição informada."
 
-    event_deadline = ""
 
-    if payload.event_start_date:
+def formatar_data(data_str):
+    if not data_str:
+        return ""
+
+    try:
+        event_date = datetime.fromisoformat(data_str.replace("Z", "+00:00"))
+        return event_date.strftime("%m/%d/%Y")
+    except Exception as e:
+        print(f"DEBUG - Erro ao formatar data: {e}")
+        return ""
+
+
+def preparar_arquivo_base64(anexo: AnexoRequest):
+    if not anexo.conteudo_base64:
+        return None
+
+    conteudo = anexo.conteudo_base64
+
+    if "," in conteudo:
+        conteudo = conteudo.split(",", 1)[1]
+
+    arquivo_bytes = base64.b64decode(conteudo)
+
+    if not arquivo_bytes:
+        return None
+
+    return (
+        anexo.nome,
+        arquivo_bytes,
+        anexo.content_type or "application/octet-stream"
+    )
+
+
+def anexar_arquivos(numero_ocorrencia, anexos):
+    resultados = []
+
+    for anexo in anexos or []:
         try:
-            event_date = datetime.fromisoformat(payload.event_start_date.replace("Z", "+00:00"))
-            event_deadline = event_date.strftime("%m/%d/%Y")
+            arquivo = preparar_arquivo_base64(anexo)
+
+            if not arquivo:
+                resultados.append({
+                    "arquivo": anexo.nome,
+                    "status": "ignorado",
+                    "resposta": "Arquivo sem conteúdo"
+                })
+                continue
+
+            data_anexo = {
+                "company.key": COMPANY_KEY,
+                "occurrence.numberOccurrence": numero_ocorrencia
+            }
+
+            files = {
+                "fileInfo": arquivo
+            }
+
+            response = requests.post(
+                URL_ANEXAR_ARQUIVO,
+                data=data_anexo,
+                files=files,
+                timeout=30
+            )
+
+            resultados.append({
+                "arquivo": anexo.nome,
+                "status_code": response.status_code,
+                "resposta": response.text.strip()
+            })
+
         except Exception as e:
-            print(f"DEBUG - Erro ao formatar data: {e}")
-            event_deadline = ""
+            resultados.append({
+                "arquivo": anexo.nome,
+                "status": "erro",
+                "resposta": str(e)
+            })
+
+    return resultados
+
+
+@app.get("/")
+async def healthcheck():
+    return {
+        "status": "online",
+        "service": "Nuubes Fokus API"
+    }
+
+
+@app.post("/criar-tarefa")
+async def criar_tarefa(payload: TarefaRequest):
+    print(f"DEBUG - Título recebido: {payload.event_title}")
+    print(f"DEBUG - Origem recebida: {payload.origem}")
+
+    texto_final_desc = limpar_html(payload.event_description or "")
+    event_deadline = formatar_data(payload.event_start_date or "")
 
     origem = (payload.origem or "").strip().lower()
 
@@ -72,14 +155,11 @@ async def criar_tarefa(payload: TarefaRequest):
         tipo_ocorrencia = "OS. REUNIÃO INTERNA"
         descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
 
-    admin_email = "nuubes@grupofokus.com.br"
-    url = "https://api.nuubes.com/api.occurrence.logic"
-
     data = {
-        "company.key": "n1w8wHXbAuE=",
+        "company.key": COMPANY_KEY,
         "occurrence.summary": payload.event_title,
         "occurrence.description": descricao_final,
-        "occurrence.requestor.email": admin_email,
+        "occurrence.requestor.email": ADMIN_EMAIL,
         "occurrence.project.name": "ANÁLISE DE PROCESSOS",
         "occurrence.occurrenceType.name": tipo_ocorrencia,
         "occurrence.customer.name": "GRUPO FOKUS",
@@ -89,82 +169,49 @@ async def criar_tarefa(payload: TarefaRequest):
     if event_deadline:
         data["occurrence.deadLine"] = event_deadline
 
-    files_payload = []
-
-    for anexo in payload.anexos or []:
-        if not anexo.conteudo_base64:
-            print(f"DEBUG - Anexo ignorado sem conteúdo: {anexo.nome}")
-            continue
-
-        try:
-            arquivo_bytes = base64.b64decode(anexo.conteudo_base64)
-
-            if not arquivo_bytes:
-                print(f"DEBUG - Anexo ignorado vazio após decode: {anexo.nome}")
-                continue
-
-            files_payload.append(
-                (
-                    "file",
-                    (
-                        anexo.nome,
-                        arquivo_bytes,
-                        anexo.content_type or "application/octet-stream"
-                    )
-                )
-            )
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Erro ao processar anexo {anexo.nome}: {str(e)}"
-            )
-
-    headers_sem_anexo = {
+    headers = {
         "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
         "User-Agent": "Nuubes-API-Client",
         "Accept": "text/plain, */*"
     }
 
-    headers_com_anexo = {
-        "User-Agent": "Nuubes-API-Client",
-        "Accept": "text/plain, */*"
-    }
-
     try:
-        if files_payload:
-            response = requests.post(
-                url,
-                data=data,
-                files=files_payload,
-                headers=headers_com_anexo,
-                timeout=30
-            )
-        else:
-            response = requests.post(
-                url,
-                data=data,
-                headers=headers_sem_anexo,
-                timeout=30
-            )
+        response = requests.post(
+            URL_CRIAR_OCORRENCIA,
+            data=data,
+            headers=headers,
+            timeout=30
+        )
 
-        resposta = response.text.strip()
+        resposta_nuubes = response.text.strip()
 
         print(f"DEBUG - Tipo enviado: {tipo_ocorrencia}")
-        print(f"DEBUG - Anexos válidos enviados: {len(files_payload)}")
-        print(f"DEBUG - Resposta Nuubes: {resposta}")
+        print(f"DEBUG - Resposta criação Nuubes: {resposta_nuubes}")
+
+        numero_ocorrencia = resposta_nuubes if resposta_nuubes.isdigit() else ""
+
+        resultados_anexos = []
+
+        if numero_ocorrencia and payload.anexos:
+            resultados_anexos = anexar_arquivos(
+                numero_ocorrencia,
+                payload.anexos
+            )
 
         return {
             "status": "success",
             "nuubes_status_code": response.status_code,
-            "nuubes_response": resposta,
+            "nuubes_response": resposta_nuubes,
+            "numero_ocorrencia": numero_ocorrencia,
             "title": payload.event_title,
             "origem_recebida": origem,
             "tipo_utilizado": tipo_ocorrencia,
-            "tem_anexo": bool(files_payload),
-            "quantidade_anexos": len(files_payload),
+            "tem_anexo": bool(payload.anexos),
+            "quantidade_anexos": len(payload.anexos or []),
+            "resultado_anexos": resultados_anexos,
             "deadline": event_deadline
         }
 
     except Exception as e:
+        print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
