@@ -177,7 +177,7 @@ async def criar_tarefa(request: Request):
     url = "https://api.nuubes.com/api.occurrence.logic"
 
     if origem == "email":
-        tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
+        tipo_ocorrencia = "OS. REUNIÃO INTERNA"
         prefixo_desc = f"E-mail recebido de {organizer_email}."
     else:
         tipo_ocorrencia = "OS. REUNIÃO INTERNA"
@@ -190,7 +190,6 @@ async def criar_tarefa(request: Request):
         "occurrence.summary": event_title,
         "occurrence.description": descricao_final,
         "occurrence.requestor.email": admin_email,
-        "occurrence.area.name": "ANÁLISE DE PROCESSOS",
         "occurrence.project.name": "ANÁLISE DE PROCESSOS",
         "occurrence.occurrenceType.name": tipo_ocorrencia,
         "occurrence.customer.name": "GRUPO FOKUS",
