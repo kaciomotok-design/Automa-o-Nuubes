@@ -178,7 +178,7 @@ async def criar_tarefa(request: Request):
     url = "https://api.nuubes.com/api.occurrence.logic"
 
     if origem == "email":
-        tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
+        tipo_ocorrencia = "OS. SOLICITACOES INTERNAS"
         prefixo_desc = f"E-mail recebido de {organizer_email}."
     else:
         tipo_ocorrencia = "OS. REUNIÃO INTERNA"
