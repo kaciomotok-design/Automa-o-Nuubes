@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Request
-from typing import Optional
 import requests
 from datetime import datetime
 import re
@@ -228,4 +227,3 @@ async def criar_tarefa(request: Request):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        # Atualizado 24/07 as 10:57hrs
