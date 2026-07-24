@@ -228,3 +228,4 @@ async def criar_tarefa(request: Request):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        # Atualizado 24/07 as 10:57hrs
