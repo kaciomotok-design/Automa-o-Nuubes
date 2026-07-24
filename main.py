@@ -92,8 +92,17 @@ async def criar_tarefa(payload: TarefaRequest):
     files_payload = []
 
     for anexo in payload.anexos or []:
+        if not anexo.conteudo_base64:
+            print(f"DEBUG - Anexo ignorado sem conteúdo: {anexo.nome}")
+            continue
+
         try:
             arquivo_bytes = base64.b64decode(anexo.conteudo_base64)
+
+            if not arquivo_bytes:
+                print(f"DEBUG - Anexo ignorado vazio após decode: {anexo.nome}")
+                continue
+
             files_payload.append(
                 (
                     "file",
@@ -104,6 +113,7 @@ async def criar_tarefa(payload: TarefaRequest):
                     )
                 )
             )
+
         except Exception as e:
             raise HTTPException(
                 status_code=400,
@@ -141,6 +151,7 @@ async def criar_tarefa(payload: TarefaRequest):
         resposta = response.text.strip()
 
         print(f"DEBUG - Tipo enviado: {tipo_ocorrencia}")
+        print(f"DEBUG - Anexos válidos enviados: {len(files_payload)}")
         print(f"DEBUG - Resposta Nuubes: {resposta}")
 
         return {
