@@ -151,10 +151,10 @@ async def criar_tarefa(payload: TarefaRequest):
     origem = (payload.origem or "").strip().lower()
     area_origem = (payload.area_origem or "").strip().lower()
 
-    if origem == "email" and area_origem == "suporte_ti":
+    if origem == "email" and area_origem == "tecnologia":
         projeto_ocorrencia = "TECNOLOGIA"
         tipo_ocorrencia = "OS. SUPORTE T.I"
-        descricao_final = f"E-mail recebido pelo suporte de {payload.organizer_email}.\n\n{texto_final_desc}"
+        descricao_final = f"E-mail recebido pela área de Tecnologia de {payload.organizer_email}.\n\n{texto_final_desc}"
     elif origem == "email":
         projeto_ocorrencia = "ANÁLISE DE PROCESSOS"
         tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
@@ -227,4 +227,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        # ATUALIZADO TECNOLOGIA - SUPORTE TI
+        #
