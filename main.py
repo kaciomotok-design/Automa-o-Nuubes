@@ -215,3 +215,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        #Atualizado 27/07 as 9:00hrs
