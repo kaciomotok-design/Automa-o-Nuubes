@@ -27,6 +27,7 @@ class TarefaRequest(BaseModel):
     organizer_email: Optional[str] = "kacio.mota@grupofokus.com.br"
     event_start_date: Optional[str] = ""
     origem: Optional[str] = "calendario"
+    area_origem: Optional[str] = ""
     anexos: Optional[List[AnexoRequest]] = []
 
 
@@ -142,13 +143,18 @@ async def healthcheck():
 async def criar_tarefa(payload: TarefaRequest):
     print(f"DEBUG - Título recebido: {payload.event_title}")
     print(f"DEBUG - Origem recebida: {payload.origem}")
+    print(f"DEBUG - Área origem recebida: {payload.area_origem}")
 
     texto_final_desc = limpar_html(payload.event_description or "")
     event_deadline = formatar_data(payload.event_start_date or "")
 
     origem = (payload.origem or "").strip().lower()
+    area_origem = (payload.area_origem or "").strip().lower()
 
-    if origem == "email":
+    if origem == "email" and area_origem == "suporte_ti":
+        tipo_ocorrencia = "OS. SUPORTE T.I"
+        descricao_final = f"E-mail recebido pelo suporte de {payload.organizer_email}.\n\n{texto_final_desc}"
+    elif origem == "email":
         tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
         descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
     else:
@@ -205,6 +211,7 @@ async def criar_tarefa(payload: TarefaRequest):
             "numero_ocorrencia": numero_ocorrencia,
             "title": payload.event_title,
             "origem_recebida": origem,
+            "area_origem_recebida": area_origem,
             "tipo_utilizado": tipo_ocorrencia,
             "tem_anexo": bool(payload.anexos),
             "quantidade_anexos": len(payload.anexos or []),
@@ -215,4 +222,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        #Atualizado 27/07 as 9:00hrs
+        #ATUALIZADO SUPORTE TI
