@@ -152,12 +152,15 @@ async def criar_tarefa(payload: TarefaRequest):
     area_origem = (payload.area_origem or "").strip().lower()
 
     if origem == "email" and area_origem == "suporte_ti":
+        projeto_ocorrencia = "TECNOLOGIA"
         tipo_ocorrencia = "OS. SUPORTE T.I"
         descricao_final = f"E-mail recebido pelo suporte de {payload.organizer_email}.\n\n{texto_final_desc}"
     elif origem == "email":
+        projeto_ocorrencia = "ANÁLISE DE PROCESSOS"
         tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
         descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
     else:
+        projeto_ocorrencia = "ANÁLISE DE PROCESSOS"
         tipo_ocorrencia = "OS. REUNIÃO INTERNA"
         descricao_final = f"Evento criado no calendário por {payload.organizer_email}.\n\n{texto_final_desc}"
 
@@ -166,7 +169,7 @@ async def criar_tarefa(payload: TarefaRequest):
         "occurrence.summary": payload.event_title,
         "occurrence.description": descricao_final,
         "occurrence.requestor.email": ADMIN_EMAIL,
-        "occurrence.project.name": "ANÁLISE DE PROCESSOS",
+        "occurrence.project.name": projeto_ocorrencia,
         "occurrence.occurrenceType.name": tipo_ocorrencia,
         "occurrence.customer.name": "GRUPO FOKUS",
         "occurrence.customer.externalCode": "FOKUS001"
@@ -191,6 +194,7 @@ async def criar_tarefa(payload: TarefaRequest):
 
         resposta_nuubes = response.text.strip()
 
+        print(f"DEBUG - Projeto enviado: {projeto_ocorrencia}")
         print(f"DEBUG - Tipo enviado: {tipo_ocorrencia}")
         print(f"DEBUG - Resposta criação Nuubes: {resposta_nuubes}")
 
@@ -212,6 +216,7 @@ async def criar_tarefa(payload: TarefaRequest):
             "title": payload.event_title,
             "origem_recebida": origem,
             "area_origem_recebida": area_origem,
+            "projeto_utilizado": projeto_ocorrencia,
             "tipo_utilizado": tipo_ocorrencia,
             "tem_anexo": bool(payload.anexos),
             "quantidade_anexos": len(payload.anexos or []),
@@ -222,4 +227,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        #ATUALIZADO SUPORTE TI
+        # ATUALIZADO TECNOLOGIA - SUPORTE TI
