@@ -154,7 +154,7 @@ async def criar_tarefa(payload: TarefaRequest):
     if origem == "email" and area_origem == "tecnologia":
         projeto_ocorrencia = "TECNOLOGIA"
         tipo_ocorrencia = "OS. SUPORTE T.I"
-        descricao_final = f"E-mail recebido pela área de Tecnologia de {payload.organizer_email}.\n\n{texto_final_desc}"
+        descricao_final = f"E-mail recebido de {payload.organizer_email}.\n\n{texto_final_desc}"
     elif origem == "email":
         projeto_ocorrencia = "ANÁLISE DE PROCESSOS"
         tipo_ocorrencia = "OS. SOLICITAÇÕES INTERNAS"
