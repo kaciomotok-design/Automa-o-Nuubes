@@ -14,6 +14,8 @@ ADMIN_EMAIL = "nuubes@grupofokus.com.br"
 URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
 URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
 
+EMAIL_NUUBES_NOTIFICACAO = "tarefas.nuubes@grupofokus.com.br"
+
 
 class AnexoRequest(BaseModel):
     nome: str
@@ -144,12 +146,26 @@ async def criar_tarefa(payload: TarefaRequest):
     print(f"DEBUG - Título recebido: {payload.event_title}")
     print(f"DEBUG - Origem recebida: {payload.origem}")
     print(f"DEBUG - Área origem recebida: {payload.area_origem}")
-
-    texto_final_desc = limpar_html(payload.event_description or "")
-    event_deadline = formatar_data(payload.event_start_date or "")
+    print(f"DEBUG - Remetente recebido: {payload.organizer_email}")
 
     origem = (payload.origem or "").strip().lower()
     area_origem = (payload.area_origem or "").strip().lower()
+    email_remetente = (payload.organizer_email or "").strip().lower()
+
+    if EMAIL_NUUBES_NOTIFICACAO in email_remetente:
+        print("DEBUG - E-mail automático do Nuubes ignorado. Nenhuma tarefa será criada.")
+
+        return {
+            "status": "ignored",
+            "reason": "E-mail automático do Nuubes ignorado",
+            "organizer_email": payload.organizer_email,
+            "title": payload.event_title,
+            "origem_recebida": origem,
+            "area_origem_recebida": area_origem
+        }
+
+    texto_final_desc = limpar_html(payload.event_description or "")
+    event_deadline = formatar_data(payload.event_start_date or "")
 
     if origem == "email" and area_origem == "tecnologia":
         projeto_ocorrencia = "TECNOLOGIA"
@@ -227,4 +243,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        #
+        #Atualizado - tarefas.nuubes
