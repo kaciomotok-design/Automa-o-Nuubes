@@ -9,7 +9,7 @@ import base64
 app = FastAPI()
 
 COMPANY_KEY = "n1w8wHXbAuE="
-ADMIN_EMAIL = "nuubes@grupofokus.com.br"
+ADMIN_EMAIL = "tarefas.nuubes@grupofokus.com.br"
 
 URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
 URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
@@ -212,6 +212,7 @@ async def criar_tarefa(payload: TarefaRequest):
 
         print(f"DEBUG - Projeto enviado: {projeto_ocorrencia}")
         print(f"DEBUG - Tipo enviado: {tipo_ocorrencia}")
+        print(f"DEBUG - Solicitante técnico enviado: {ADMIN_EMAIL}")
         print(f"DEBUG - Resposta criação Nuubes: {resposta_nuubes}")
 
         numero_ocorrencia = resposta_nuubes if resposta_nuubes.isdigit() else ""
@@ -234,6 +235,7 @@ async def criar_tarefa(payload: TarefaRequest):
             "area_origem_recebida": area_origem,
             "projeto_utilizado": projeto_ocorrencia,
             "tipo_utilizado": tipo_ocorrencia,
+            "email_admin_utilizado": ADMIN_EMAIL,
             "tem_anexo": bool(payload.anexos),
             "quantidade_anexos": len(payload.anexos or []),
             "resultado_anexos": resultados_anexos,
@@ -243,4 +245,4 @@ async def criar_tarefa(payload: TarefaRequest):
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        #Atualizado - tarefas.nuubes
+       # Atualizado 29/07 as 17:00hrs
