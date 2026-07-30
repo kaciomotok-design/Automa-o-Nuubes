@@ -9,7 +9,7 @@ import base64
 app = FastAPI()
 
 COMPANY_KEY = "n1w8wHXbAuE="
-ADMIN_EMAIL = "tarefas.nuubes@grupofokus.com.br"
+ADMIN_EMAIL = "tarefas@grupofokus.com.br"
 
 URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
 URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
