@@ -13,6 +13,7 @@ ADMIN_EMAIL = "tarefas.nuubes@grupofokus.com.br"
 
 URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
 URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
+URL_HISTORICO = "https://api.nuubes.com/api.occurrenceHistory.logic"
 
 EMAILS_NUUBES_NOTIFICACAO = [
     "tarefas.nuubes@grupofokus.com.br",
@@ -135,6 +136,57 @@ def anexar_arquivos(numero_ocorrencia, anexos):
     return resultados
 
 
+
+
+def obter_historico_ocorrencia(numero_ocorrencia):
+    params = {
+        "company.key": COMPANY_KEY,
+        "occurrence.numberOccurrence": numero_ocorrencia
+    }
+
+    response = requests.get(
+        URL_HISTORICO,
+        params=params,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    historico = response.json()
+
+    if not historico:
+        return None
+
+    comentario = None
+
+    for item in reversed(historico):
+        descricao = (item.get("description") or "").strip()
+        audit = (item.get("auditInfo") or "").strip()
+
+        if (
+            descricao
+            and not descricao.startswith("Responsável da atividade")
+            and not descricao.startswith("Tipo de atividade")
+            and not audit
+        ):
+            comentario = {
+                "responsavel": item.get("user"),
+                "comentario": descricao,
+                "data": item.get("dateAdd")
+            }
+            break
+
+    if not comentario:
+        ultimo = historico[-1]
+        comentario = {
+            "responsavel": ultimo.get("user"),
+            "comentario": ultimo.get("description"),
+            "data": ultimo.get("dateAdd")
+        }
+
+    return comentario
+
+
 @app.get("/")
 async def healthcheck():
     return {
@@ -249,4 +301,27 @@ async def criar_tarefa(payload: TarefaRequest):
 
     except Exception as e:
         print(f"DEBUG - Erro crítico: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/obter-historico/{numero_ocorrencia}")
+async def obter_historico(numero_ocorrencia: str):
+    try:
+        resultado = obter_historico_ocorrencia(numero_ocorrencia)
+
+        if not resultado:
+            return {
+                "status": "not_found",
+                "numero_ocorrencia": numero_ocorrencia
+            }
+
+        return {
+            "status": "success",
+            "numero_ocorrencia": numero_ocorrencia,
+            "responsavel": resultado["responsavel"],
+            "comentario": resultado["comentario"],
+            "data": resultado["data"]
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
