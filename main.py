@@ -5,6 +5,7 @@ import requests
 from datetime import datetime
 import re
 import base64
+import json
 
 app = FastAPI()
 
@@ -139,56 +140,180 @@ def anexar_arquivos(numero_ocorrencia, anexos):
 
 
 
-def obter_historico_ocorrencia(numero_ocorrencia):
-    params = {
-        "company.key": COMPANY_KEY,
-        "occurrence.numberOccurrence": numero_ocorrencia
+
+TIMEOUT_NUUBES = (5, 12)
+
+
+def _resumo_resposta(response, limite=500):
+    texto = (response.text or "").strip()
+    texto = re.sub(r"\s+", " ", texto)
+    return texto[:limite]
+
+
+def _json_seguro(response, nome_endpoint):
+    """
+    Converte a resposta do Nuubes em JSON sem deixar um JSON inválido
+    derrubar toda a integração. Em caso de conteúdo inválido, gera um
+    erro descritivo com endpoint, status HTTP, content-type e trecho
+    da resposta recebida.
+    """
+    content_type = (response.headers.get("content-type") or "").lower()
+    texto = (response.text or "").strip()
+
+    if not texto:
+        raise ValueError(
+            f"{nome_endpoint} retornou resposta vazia "
+            f"(HTTP {response.status_code}, content-type={content_type or 'não informado'})"
+        )
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        trecho = _resumo_resposta(response)
+        raise ValueError(
+            f"{nome_endpoint} retornou conteúdo que não é JSON válido "
+            f"(HTTP {response.status_code}, content-type={content_type or 'não informado'}). "
+            f"Trecho recebido: {trecho!r}"
+        ) from exc
+
+
+def _get_nuubes(url, params, nome_endpoint):
+    """
+    Executa GET no Nuubes com timeout curto e mensagens de erro claras.
+    """
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "Nuubes-Fokus-Integration/1.0"
+            },
+            timeout=TIMEOUT_NUUBES
+        )
+        response.raise_for_status()
+        return _json_seguro(response, nome_endpoint)
+    except requests.Timeout as exc:
+        raise requests.RequestException(
+            f"{nome_endpoint} excedeu o tempo limite de consulta ao Nuubes"
+        ) from exc
+    except requests.RequestException:
+        raise
+
+
+def _extrair_dados_historico(historico):
+    """
+    Extrai comentário humano mais recente e também informações úteis
+    registradas pelo Nuubes no histórico (responsável, status e tipo).
+    """
+    resultado = {
+        "responsavel": "",
+        "comentario": "",
+        "data": "",
+        "status": "",
+        "tipo": ""
     }
 
-    response = requests.get(
-        URL_HISTORICO,
-        params=params,
-        timeout=30
-    )
+    if not isinstance(historico, list) or not historico:
+        return resultado
 
-    response.raise_for_status()
+    # Informações administrativas/auditoria
+    for item in historico:
+        descricao = (item.get("description") or "").strip()
+        audit = (item.get("auditInfo") or "").strip()
+        usuario = (item.get("user") or "").strip()
 
-    historico = response.json()
+        m_resp = re.search(
+            r"Responsável da atividade definido para\s+(.+?)(?:\.|$)",
+            descricao,
+            flags=re.IGNORECASE
+        )
+        if m_resp:
+            resultado["responsavel"] = m_resp.group(1).strip()
 
-    if not historico:
-        return None
+        m_tipo = re.search(
+            r"Tipo de atividade alterado de .+? para\s+(.+?)(?:\.|$)",
+            descricao,
+            flags=re.IGNORECASE
+        )
+        if m_tipo:
+            resultado["tipo"] = m_tipo.group(1).strip()
 
-    comentario = None
+        texto_status = f"{audit} {descricao}"
+        m_status = re.search(
+            r"Status (?:foi )?alterado de .+? para\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ ]+)",
+            texto_status,
+            flags=re.IGNORECASE
+        )
+        if m_status:
+            resultado["status"] = m_status.group(1).strip(" .,;")
 
+        if not resultado["responsavel"] and usuario:
+            resultado["responsavel"] = usuario
+
+    # Comentário humano mais recente:
+    # ignora linhas automáticas de responsável/tipo e itens puramente de auditoria.
     for item in reversed(historico):
         descricao = (item.get("description") or "").strip()
         audit = (item.get("auditInfo") or "").strip()
 
         if (
             descricao
-            and not descricao.startswith("Responsável da atividade")
-            and not descricao.startswith("Tipo de atividade")
+            and not descricao.lower().startswith("responsável da atividade")
+            and not descricao.lower().startswith("tipo de atividade")
+            and not descricao.lower().startswith("status alterado")
             and not audit
         ):
-            comentario = {
-                "responsavel": item.get("user"),
-                "comentario": descricao,
-                "data": item.get("dateAdd")
-            }
+            resultado["comentario"] = descricao
+            resultado["data"] = (item.get("dateAdd") or "").strip()
+            if item.get("user"):
+                resultado["responsavel"] = (item.get("user") or "").strip()
             break
 
-    if not comentario:
+    # Se não houver comentário humano, mantém um fallback informativo.
+    if not resultado["comentario"]:
         ultimo = historico[-1]
-        comentario = {
-            "responsavel": ultimo.get("user"),
-            "comentario": ultimo.get("description"),
-            "data": ultimo.get("dateAdd")
-        }
+        resultado["comentario"] = (ultimo.get("description") or "").strip()
+        resultado["data"] = (ultimo.get("dateAdd") or "").strip()
+        if not resultado["responsavel"]:
+            resultado["responsavel"] = (ultimo.get("user") or "").strip()
 
-    return comentario
-
+    return resultado
 
 
+def obter_historico_completo(numero_ocorrencia):
+    params = {
+        "company.key": COMPANY_KEY,
+        "occurrence.numberOccurrence": numero_ocorrencia
+    }
+
+    dados = _get_nuubes(
+        URL_HISTORICO,
+        params,
+        "api.occurrenceHistory.logic"
+    )
+
+    if not dados:
+        return []
+
+    if isinstance(dados, list):
+        return dados
+
+    if isinstance(dados, dict):
+        return [dados]
+
+    raise ValueError(
+        "api.occurrenceHistory.logic retornou um formato inesperado"
+    )
+
+
+def obter_historico_ocorrencia(numero_ocorrencia):
+    historico = obter_historico_completo(numero_ocorrencia)
+
+    if not historico:
+        return None
+
+    return _extrair_dados_historico(historico)
 
 def consultar_ocorrencia(numero_ocorrencia):
     params = {
@@ -196,19 +321,16 @@ def consultar_ocorrencia(numero_ocorrencia):
         "occurrence.numberOccurrence": numero_ocorrencia
     }
 
-    response = requests.get(
+    dados = _get_nuubes(
         URL_CRIAR_OCORRENCIA,
-        params=params,
-        timeout=30
+        params,
+        "api.occurrence.logic"
     )
-    response.raise_for_status()
-    dados = response.json()
 
     if isinstance(dados, list):
         return dados[0] if dados else None
 
     return dados if isinstance(dados, dict) else None
-
 
 def consultar_workflow(numero_ocorrencia):
     params = {
@@ -216,19 +338,16 @@ def consultar_workflow(numero_ocorrencia):
         "occurrence.numberOccurrence": numero_ocorrencia
     }
 
-    response = requests.get(
+    dados = _get_nuubes(
         URL_WORKFLOW,
-        params=params,
-        timeout=30
+        params,
+        "api.workflowPath.logic"
     )
-    response.raise_for_status()
-    dados = response.json()
 
     if not dados:
         return []
 
     return dados if isinstance(dados, list) else [dados]
-
 
 def selecionar_etapa_workflow(workflow):
     if not workflow:
@@ -240,21 +359,54 @@ def selecionar_etapa_workflow(workflow):
 
 
 def montar_dados_os(numero_ocorrencia):
-    ocorrencia = consultar_ocorrencia(numero_ocorrencia)
-    historico = obter_historico_ocorrencia(numero_ocorrencia)
-    workflow = consultar_workflow(numero_ocorrencia)
+    """
+    Consulta as fontes do Nuubes de forma independente.
+    Se occurrence ou workflow falharem, o histórico ainda pode permitir
+    devolver os dados úteis da OS sem travar o Power Automate.
+    """
+    avisos = []
+
+    ocorrencia = None
+    historico = None
+    workflow = []
+
+    try:
+        ocorrencia = consultar_ocorrencia(numero_ocorrencia)
+    except Exception as e:
+        mensagem = f"occurrence: {str(e)}"
+        print(f"DEBUG - {mensagem}")
+        avisos.append(mensagem)
+
+    try:
+        historico = obter_historico_ocorrencia(numero_ocorrencia)
+    except Exception as e:
+        mensagem = f"historico: {str(e)}"
+        print(f"DEBUG - {mensagem}")
+        avisos.append(mensagem)
+
+    try:
+        workflow = consultar_workflow(numero_ocorrencia)
+    except Exception as e:
+        mensagem = f"workflow: {str(e)}"
+        print(f"DEBUG - {mensagem}")
+        avisos.append(mensagem)
+        workflow = []
+
     etapa = selecionar_etapa_workflow(workflow)
 
     if not ocorrencia and not historico and not etapa:
+        # Se todas as fontes falharam, devolve erro detalhado.
+        if avisos:
+            raise RuntimeError(
+                "Não foi possível obter dados da OS no Nuubes. "
+                + " | ".join(avisos)
+            )
         return None
 
     ocorrencia = ocorrencia or {}
     historico = historico or {}
     etapa = etapa or {}
 
-    # Os nomes abaixo seguem o exemplo de retorno documentado pelo Nuubes.
-    # Há fallbacks para manter compatibilidade caso a instalação devolva
-    # pequenas variações nos nomes dos campos.
     numero = (
         ocorrencia.get("numero")
         or ocorrencia.get("numberOccurrence")
@@ -265,12 +417,15 @@ def montar_dados_os(numero_ocorrencia):
     assunto = (
         ocorrencia.get("assunto")
         or ocorrencia.get("summary")
+        or etapa.get("assunto")
+        or etapa.get("summary")
         or ""
     )
 
     status = (
         ocorrencia.get("status")
         or etapa.get("status")
+        or historico.get("status")
         or ""
     )
 
@@ -284,11 +439,18 @@ def montar_dados_os(numero_ocorrencia):
     area = (
         ocorrencia.get("area")
         or etapa.get("area")
+        or ocorrencia.get("project")
+        or etapa.get("project")
         or ""
     )
 
+    # Alguns retornos podem trazer objetos em vez de texto.
+    if isinstance(area, dict):
+        area = area.get("name") or area.get("nome") or ""
+
     departamento = (
         ocorrencia.get("departamento")
+        or etapa.get("departamento")
         or area
         or ""
     )
@@ -296,6 +458,7 @@ def montar_dados_os(numero_ocorrencia):
     tipo = (
         ocorrencia.get("tipo")
         or etapa.get("tipo")
+        or historico.get("tipo")
         or ""
     )
 
@@ -306,7 +469,7 @@ def montar_dados_os(numero_ocorrencia):
     )
 
     return {
-        "status_integracao": "success",
+        "status_integracao": "success" if not avisos else "partial_success",
         "numero_ocorrencia": str(numero),
         "assunto": assunto,
         "status_os": status,
@@ -318,7 +481,8 @@ def montar_dados_os(numero_ocorrencia):
         "comentario": historico.get("comentario", ""),
         "usuario_resposta": historico.get("responsavel", ""),
         "data_resposta": historico.get("data", ""),
-        "workflow": workflow
+        "workflow": workflow,
+        "avisos_integracao": avisos
     }
 
 
@@ -485,5 +649,7 @@ async def obter_dados_os(numero_ocorrencia: str):
         )
     except Exception as e:
         print(f"DEBUG - Erro ao obter dados da OS {numero_ocorrencia}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise HTTPException(
+            status_code=502,
+            detail=f"Falha ao consultar dados da OS {numero_ocorrencia}: {str(e)}"
+        )
