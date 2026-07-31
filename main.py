@@ -14,6 +14,7 @@ ADMIN_EMAIL = "tarefas.nuubes@grupofokus.com.br"
 URL_CRIAR_OCORRENCIA = "https://api.nuubes.com/api.occurrence.logic"
 URL_ANEXAR_ARQUIVO = "https://api.nuubes.com/api.files.logic"
 URL_HISTORICO = "https://api.nuubes.com/api.occurrenceHistory.logic"
+URL_WORKFLOW = "https://api.nuubes.com/api.workflowPath.logic"
 
 EMAILS_NUUBES_NOTIFICACAO = [
     "tarefas.nuubes@grupofokus.com.br",
@@ -187,6 +188,140 @@ def obter_historico_ocorrencia(numero_ocorrencia):
     return comentario
 
 
+
+
+def consultar_ocorrencia(numero_ocorrencia):
+    params = {
+        "company.key": COMPANY_KEY,
+        "occurrence.numberOccurrence": numero_ocorrencia
+    }
+
+    response = requests.get(
+        URL_CRIAR_OCORRENCIA,
+        params=params,
+        timeout=30
+    )
+    response.raise_for_status()
+    dados = response.json()
+
+    if isinstance(dados, list):
+        return dados[0] if dados else None
+
+    return dados if isinstance(dados, dict) else None
+
+
+def consultar_workflow(numero_ocorrencia):
+    params = {
+        "company.key": COMPANY_KEY,
+        "occurrence.numberOccurrence": numero_ocorrencia
+    }
+
+    response = requests.get(
+        URL_WORKFLOW,
+        params=params,
+        timeout=30
+    )
+    response.raise_for_status()
+    dados = response.json()
+
+    if not dados:
+        return []
+
+    return dados if isinstance(dados, list) else [dados]
+
+
+def selecionar_etapa_workflow(workflow):
+    if not workflow:
+        return None
+
+    # A API documentada retorna o caminho percorrido.
+    # Para o resumo usamos a última etapa devolvida pelo Nuubes.
+    return workflow[-1]
+
+
+def montar_dados_os(numero_ocorrencia):
+    ocorrencia = consultar_ocorrencia(numero_ocorrencia)
+    historico = obter_historico_ocorrencia(numero_ocorrencia)
+    workflow = consultar_workflow(numero_ocorrencia)
+    etapa = selecionar_etapa_workflow(workflow)
+
+    if not ocorrencia and not historico and not etapa:
+        return None
+
+    ocorrencia = ocorrencia or {}
+    historico = historico or {}
+    etapa = etapa or {}
+
+    # Os nomes abaixo seguem o exemplo de retorno documentado pelo Nuubes.
+    # Há fallbacks para manter compatibilidade caso a instalação devolva
+    # pequenas variações nos nomes dos campos.
+    numero = (
+        ocorrencia.get("numero")
+        or ocorrencia.get("numberOccurrence")
+        or etapa.get("numero")
+        or numero_ocorrencia
+    )
+
+    assunto = (
+        ocorrencia.get("assunto")
+        or ocorrencia.get("summary")
+        or ""
+    )
+
+    status = (
+        ocorrencia.get("status")
+        or etapa.get("status")
+        or ""
+    )
+
+    responsavel = (
+        ocorrencia.get("responsavel")
+        or etapa.get("responsavel")
+        or historico.get("responsavel")
+        or ""
+    )
+
+    area = (
+        ocorrencia.get("area")
+        or etapa.get("area")
+        or ""
+    )
+
+    departamento = (
+        ocorrencia.get("departamento")
+        or area
+        or ""
+    )
+
+    tipo = (
+        ocorrencia.get("tipo")
+        or etapa.get("tipo")
+        or ""
+    )
+
+    solicitante = (
+        ocorrencia.get("solicitante")
+        or etapa.get("solicitante")
+        or ""
+    )
+
+    return {
+        "status_integracao": "success",
+        "numero_ocorrencia": str(numero),
+        "assunto": assunto,
+        "status_os": status,
+        "responsavel": responsavel,
+        "departamento": departamento,
+        "area": area,
+        "tipo": tipo,
+        "solicitante": solicitante,
+        "comentario": historico.get("comentario", ""),
+        "usuario_resposta": historico.get("responsavel", ""),
+        "data_resposta": historico.get("data", ""),
+        "workflow": workflow
+    }
+
+
 @app.get("/")
 async def healthcheck():
     return {
@@ -325,3 +460,30 @@ async def obter_historico(numero_ocorrencia: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/obter-dados-os/{numero_ocorrencia}")
+async def obter_dados_os(numero_ocorrencia: str):
+    try:
+        resultado = montar_dados_os(numero_ocorrencia)
+
+        if not resultado:
+            raise HTTPException(
+                status_code=404,
+                detail=f"OS {numero_ocorrencia} não encontrada no Nuubes"
+            )
+
+        return resultado
+
+    except HTTPException:
+        raise
+    except requests.RequestException as e:
+        print(f"DEBUG - Erro de comunicação ao consultar OS {numero_ocorrencia}: {str(e)}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erro de comunicação com a API do Nuubes: {str(e)}"
+        )
+    except Exception as e:
+        print(f"DEBUG - Erro ao obter dados da OS {numero_ocorrencia}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
